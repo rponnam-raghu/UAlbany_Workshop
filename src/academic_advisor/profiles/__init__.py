@@ -1,0 +1,1 @@
+"""Fictional student profile services."""

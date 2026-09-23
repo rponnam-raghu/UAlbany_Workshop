@@ -1,0 +1,32 @@
+name: academic-advisor-workshop
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17
+    environment:
+      POSTGRES_USER: advisor
+      POSTGRES_PASSWORD: workshop
+      POSTGRES_DB: advisor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U advisor -d advisor"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  app:
+    build:
+      context: .
+      target: base
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://advisor:workshop@db:5432/advisor
+      RUNTIME_DIR: /app/runtime
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres_data:

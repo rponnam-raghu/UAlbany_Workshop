@@ -1,0 +1,16 @@
+FICTIONAL WORKSHOP UNIVERSITY
+Campus services guide
+
+This guide is fictional workshop material and is not official University at Albany information.
+
+STUDENT HELP DESK
+The student help desk is in Student Hub, Room 101. It is open Monday through Friday, 9:00 a.m. to 5:00 p.m. Eastern Time. Staff can help students find campus services and book a meeting with an academic advisor. Contact helpdesk@workshop.example.
+
+COMPUTING SUPPORT
+For help with a campus account or classroom software, contact computing@workshop.example. Include a description of the problem and the application name. Never include passwords or API keys in a support request.
+
+STUDY SUPPORT
+The Learning Center offers fictional peer tutoring in introductory programming and mathematics. Students can request a tutoring appointment at tutoring@workshop.example. Include the course code and the topic they want to practice.
+
+ACCESSIBILITY SUPPORT
+Students can contact access@workshop.example to discuss accessible learning arrangements with a human staff member. The chatbot can explain this contact information but cannot approve arrangements or exceptions.

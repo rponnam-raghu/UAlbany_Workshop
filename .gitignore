@@ -1,0 +1,40 @@
+# Local environment and secrets; commit only the placeholder template.
+.env
+.env.*
+.env_*
+!.env_example
+.streamlit/secrets.toml
+
+# Python environments, bytecode, and build output.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+
+# Test, lint, type-check, and coverage output.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# Local application state and logs. Keep data/samples and data/fixtures.
+/runtime/
+*.log
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
