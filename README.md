@@ -32,13 +32,21 @@ Three fictional student profiles are seeded in PostgreSQL during initialization;
 
 Have Docker Desktop running and the repository available locally. Each participant configures their own `GEMINI_API_KEY`, `OPENAI_API_KEY`, or both in `.env`. Either provider can handle chat and embeddings independently. Pair students when setup problems would otherwise take time away from the workshop.
 
-If `.env` does not exist, copy [`.env_example`](.env_example) to `.env` and replace the relevant API key placeholder with your own key. Keep an existing configured `.env`; never commit it, put keys in documents, or share them on screen. The template also lists optional configuration overrides. Local `.env` files, virtual environments, caches, and runtime output are excluded from Git and the Docker build context.
+If `.env` does not exist, copy [`.env_example`](.env_example) to `.env` and replace the relevant API key placeholder with your own key. Keep an existing configured `.env`; never commit it, put keys in documents, or share them on screen. The template contains only API key placeholders; optional model overrides are documented below. Local `.env` files, virtual environments, caches, and runtime output are excluded from Git and the Docker build context.
 
-Run these commands from the repository root. Use the development configuration for the date-tool exercise:
+Run these commands from the repository root (the folder containing `compose.yaml`). They work in Windows PowerShell, macOS Terminal, and Linux shells. Use the development configuration for the date-tool exercise:
 
 ```sh
 docker compose -f compose.yaml -f compose.dev.yaml up --build -d
 ```
+
+Check both services before opening the UI:
+
+```sh
+docker compose ps -a
+```
+
+Both `app` and `db` should show `Up` and `(healthy)`. If a service is still starting, wait briefly and check again. An `app` health check only verifies that Streamlit responds; it does not verify database connectivity. If `db` is stopped or missing, follow [database troubleshooting](#if-streamlit-says-postgresql-is-unavailable).
 
 Open [the local app](http://localhost:8501). On macOS, you can also run `open http://localhost:8501`. The app uses port 8501. The development database uses host port 55432 unless `POSTGRES_HOST_PORT` overrides it. For occupied ports, follow [the troubleshooting steps below](#if-a-port-is-already-in-use).
 
@@ -49,6 +57,8 @@ For simply running the app without the development mounts or test dependencies, 
 ```sh
 docker compose up --build -d
 ```
+
+Use the full startup command above when returning to the workshop, including after restarting Docker Desktop. Starting only the app container in Docker Desktop does not start a stopped database.
 
 The regular configuration keeps PostgreSQL on the internal Compose network without exposing a host database port. Both configurations preserve knowledge in the `postgres_data` volume.
 
@@ -67,12 +77,48 @@ New uploads index with the active provider. Replacing a document updates its sha
 After changing `.env` or dependencies, recreate the application container so Compose loads the new environment:
 
 ```sh
-docker compose -f compose.yaml -f compose.dev.yaml up --build -d --no-deps app
+docker compose -f compose.yaml -f compose.dev.yaml up --build -d --force-recreate app
 ```
 
-This preserves the database volume. For the regular configuration, omit `-f compose.yaml -f compose.dev.yaml`.
+This also starts the database dependency if needed and preserves its volume. Avoid `--no-deps` unless you have confirmed `db` is already healthy. For the regular configuration, omit `-f compose.yaml -f compose.dev.yaml`.
 
 CLI commands `load-samples` and `smoke` accept `--provider gemini` or `--provider openai` and check both capabilities before automatic fallback. `list-documents` and `init-db` do not require provider calls. The `smoke` command checks retrieval, not a full live conversation. Index existing documents through the UI before searching with a new provider.
+
+### If Streamlit says PostgreSQL is unavailable
+
+A running Streamlit page can still show a database error when the `db` container is stopped. This is a database/startup issue, not an AI provider key issue.
+
+From the same repository folder, inspect all containers, including stopped ones:
+
+```sh
+docker compose ps -a
+```
+
+If only `app` is running, start the database:
+
+```sh
+docker compose up -d db
+docker compose ps -a
+```
+
+For the development configuration, use `docker compose -f compose.yaml -f compose.dev.yaml up -d db` instead. Keep the same Compose configuration you used to start the workshop.
+
+Once `db` shows `(healthy)`, refresh the Streamlit page. The app applies database migrations automatically. You do not need to add a local database URL to `.env`: Compose supplies the internal database connection.
+
+If `db` is healthy but the error remains, run initialization explicitly to check for a connection or migration failure:
+
+```sh
+docker compose exec app uv run --no-sync advisor init-db
+```
+
+If initialization succeeds, refresh the page. If it fails, or the database will not stay running, collect the command output and recent logs for troubleshooting:
+
+```sh
+docker compose logs --tail=60 db
+docker compose logs --tail=60 app
+```
+
+Remove any credentials before sharing output. Keep the existing database volume: **do not run `docker compose down -v` or delete `postgres_data` to fix startup errors**.
 
 ### If a port is already in use
 

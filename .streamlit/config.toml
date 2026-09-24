@@ -2,3 +2,19 @@
 maxUploadSize = 10
 headless = true
 fileWatcherType = "poll"
+
+[theme]
+base = "light"
+primaryColor = "#171717"
+backgroundColor = "#FFFCF7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#171717"
+borderColor = "#DED8CE"
+showWidgetBorder = true
+
+[theme.sidebar]
+primaryColor = "#171717"
+backgroundColor = "#F5F0E8"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#171717"
+borderColor = "#DED8CE"

@@ -160,8 +160,9 @@ def _profile_changed() -> None:
 
 
 def chat_screen(settings: Settings, store: KnowledgeStore, profiles: ProfileService | None = None, profile_id: UUID | None = None) -> None:
-    st.markdown('<div class="eyebrow">Intro to AI Agents and Building Chatbots with LLMs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="workshop-heading">UAlbany Coding Club Workshop</div>', unsafe_allow_html=True)
     st.title("Student Helpdesk")
+    st.markdown('<p class="workshop-subtitle">Intro to AI Agents and Building Chatbots with LLMs</p>', unsafe_allow_html=True)
     st.markdown(
         '<p class="intro">Ask a natural-language question using your selected profile and advisor documents. '
         "This fictional workshop assistant advises; it never approves enrollment or changes records.</p>",
