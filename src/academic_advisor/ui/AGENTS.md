@@ -1,7 +1,7 @@
 # Streamlit presentation
 
 - Keep three workflows: **Chat**, **Student Profile**, and **Knowledge Base**. Open to Chat with Sam selected on a new session, a compact profile summary, and prominent natural-language input.
-- Keep histories separate by profile ID, including general chat. Clear pending questions and unsaved edit state when switching students; never fall back silently from an unavailable profile.
+- Keep histories separate by active provider and profile ID, including general chat. Preserve pending questions during automatic provider fallback and require explicit indexing before resuming when the alternate index is incomplete. Clear pending questions and unsaved edit state when switching students; never fall back silently from an unavailable profile.
 - Show profiles read-only first. Edit profile opens a prefilled form; Save validates and persists, Cancel discards changes. Retain the edit-start revision to reject stale saves.
 - Accept freely typed questions and follow-ups. Keep example questions, source excerpts, and the tool trace in collapsed expanders rather than making presets the primary interaction.
 - Render each historical answer with its own saved sources and trace, not the latest retrieval results. Knowledge changes must not erase the visible conversation.

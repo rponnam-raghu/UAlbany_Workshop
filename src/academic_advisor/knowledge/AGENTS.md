@@ -8,7 +8,7 @@
 - Preview must stay local: extracting a preview must not call Gemini or write to the database.
 - Check content hashes before embedding identical uploads. Changed content with an existing filename requires an explicit replacement target.
 - Finish extraction and all embedding batches before saving a replacement. Validate vector count, dimensions, finite values, and normalization; a failed replacement must leave the previous document usable.
-- Keep the embedding model/dimension signature consistent across all indexed documents and search queries.
-- Index only through explicit add/replace operations. Search must use all current uploaded knowledge rather than hardcoded course names or the legacy catalog filter.
+- Keep provider/model/dimension signatures consistent within each index and its queries. Require a complete active index before search; never silently search a partial index.
+- Index only through explicit add/replace or index-existing operations. Search must use all current uploaded knowledge rather than hardcoded course names or the legacy catalog filter.
 
 Verify format locations, duplicate embedding avoidance, failure handling, and replacement behavior in [tests](../../../tests/AGENTS.md).

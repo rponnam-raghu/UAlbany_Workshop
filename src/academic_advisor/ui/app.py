@@ -1,12 +1,21 @@
 """Streamlit chat, fictional student profiles, and advisor knowledge."""
 
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 from uuid import UUID
 
 import streamlit as st
 
 from academic_advisor.agent.chat import ChatService
-from academic_advisor.agent.gemini import Gemini, ProviderError
+from academic_advisor.agent.errors import ProviderError
+from academic_advisor.agent.providers import (
+    NoProviderAvailable,
+    ProviderClient,
+    config_token,
+    create_client,
+    select_provider,
+)
 from academic_advisor.config import Settings
 from academic_advisor.domain.documents import Answer, Document, Message, Upload
 from academic_advisor.domain.profiles import SAM_ID
@@ -26,12 +35,99 @@ SUPPORTED = ["pdf", "txt", "docx", "md", "markdown"]
 def _services(settings: Settings) -> KnowledgeStore:
     database = Database(settings)
     database.migrate()
-    signature = f"{settings.embedding_model}:{settings.embedding_dimension}"
+    signature = settings.signature(_active(settings))
     return KnowledgeStore(database, signature)
 
 
-def _client(settings: Settings) -> Gemini:
-    return Gemini(settings)
+def _active(settings: Settings) -> str:
+    return str(st.session_state.get("active_provider", settings.default_provider()))
+
+
+def _client(settings: Settings) -> ProviderClient:
+    return create_client(settings, _active(settings))
+
+
+def _provider_changed() -> None:
+    st.session_state.active_provider = st.session_state.preferred_provider
+    for key in ("provider_checked", "provider_notice", "provider_failed", "provider_error", "pending_question", "pending_chat"):
+        st.session_state.pop(key, None)
+
+
+def _ensure_provider(settings: Settings, *, exclude: set[str] | None = None, rerun: bool = True) -> None:
+    active = _active(settings)
+    token = (config_token(settings), active)
+    if not exclude and st.session_state.get("provider_checked") == token:
+        return
+    fingerprint = config_token(settings)
+    if st.session_state.get("provider_config") != fingerprint:
+        st.session_state.provider_failed = set()
+        st.session_state.provider_config = fingerprint
+    excluded = set(st.session_state.get("provider_failed", set())) | (exclude or set())
+    try:
+        selected, notice, failed = select_provider(settings, active, exclude=excluded)
+    except NoProviderAvailable as error:
+        st.session_state.pop("provider_checked", None)
+        st.session_state.provider_error = str(error)
+        raise
+    st.session_state.pop("provider_error", None)
+    st.session_state.provider_failed = failed
+    st.session_state.active_provider = selected
+    st.session_state.provider_checked = (config_token(settings), selected)
+    if selected != active:
+        reason = notice or st.session_state.get("provider_notice", "The preferred provider failed.")
+        st.session_state.provider_notice = f"Using {'OpenAI' if selected == 'openai' else 'Gemini'} for chat and embeddings. " + reason
+        if rerun:
+            st.rerun()
+
+
+def _run_document_action(settings: Settings, store: KnowledgeStore, operation: Callable[[DocumentService], str | None]) -> str | None:
+    """Retry one failed embedding operation with a complete alternate provider."""
+    attempted: set[str] = set()
+    for _ in range(2):
+        _ensure_provider(settings, exclude=attempted or None, rerun=False)
+        provider = _active(settings)
+        attempted.add(provider)
+        active_store = KnowledgeStore(store.database, settings.signature(provider))
+        try:
+            service = _document_service(settings, active_store)
+            return operation(service)
+        except ProviderError as error:
+            st.session_state.provider_notice = str(error)
+            st.session_state.pop("provider_checked", None)
+            st.session_state.provider_failed = set(st.session_state.get("provider_failed", set())) | {provider}
+            if len(attempted) == 2:
+                raise
+    raise ProviderError("No working provider is available.")
+
+
+def _index_missing(settings: Settings, store: KnowledgeStore, *, resume: bool = False) -> bool:
+    missing = store.missing_documents()
+    if not missing:
+        return True
+    provider = _active(settings)
+    st.warning(f"{len(missing)} document(s) need indexing for {provider.title()} before chatting.")
+    label = "Index documents and continue" if resume else f"Index existing documents for {provider.title()}"
+    if st.button(label, key=f"index_missing_{provider}"):
+        try:
+            _ensure_provider(settings)
+            progress = st.progress(0, text="Indexing documents…")
+            for index, document in enumerate(missing):
+                try:
+                    _run_document_action(settings, store, partial(DocumentService.index_document, document=document))
+                    if _active(settings) != provider:
+                        st.rerun()
+                except ProviderError as error:
+                    st.error(f"{document.filename}: {error}")
+                    break
+                except (ValueError, DatabaseError) as error:
+                    st.error(f"{document.filename}: {error}")
+                    continue
+                progress.progress((index + 1) / len(missing), text=f"Indexed {document.filename}")
+            if not store.missing_documents():
+                st.rerun()
+        except (ValueError, ProviderError, DatabaseError) as error:
+            st.error(str(error))
+    return False
 
 
 def _profile_service(settings: Settings) -> ProfileService:
@@ -39,7 +135,7 @@ def _profile_service(settings: Settings) -> ProfileService:
 
 
 def _document_service(settings: Settings, store: KnowledgeStore) -> DocumentService:
-    return DocumentService(store, _client(settings), settings)
+    return DocumentService(store, _client(settings), settings.for_provider(_active(settings)))
 
 
 def _upload_bytes(uploaded: Any) -> bytes:
@@ -58,6 +154,7 @@ def _show_answer(answer: Answer) -> None:
 
 def _profile_changed() -> None:
     st.session_state.pop("pending_question", None)
+    st.session_state.pop("pending_chat", None)
     st.session_state.pop("profile_edit", None)
     st.session_state.pop("profile_saved", None)
 
@@ -87,7 +184,10 @@ def chat_screen(settings: Settings, store: KnowledgeStore, profiles: ProfileServ
         # The previous unpersonalized conversation belongs only to general chat.
         st.session_state.chat_histories = {"general": st.session_state.pop("chat_history", [])}
     owner = str(profile_id) if profile_id else "general"
-    messages: list[Message] = st.session_state.chat_histories.setdefault(owner, [])
+    provider = _active(settings)
+    # Existing Gemini histories retain their original keys.
+    history_key = owner if provider == "gemini" else f"openai:{owner}"
+    messages: list[Message] = st.session_state.chat_histories.setdefault(history_key, [])
     for message in messages:
         with st.chat_message(message.role):
             if message.role == "assistant" and message.answer:
@@ -107,27 +207,50 @@ def chat_screen(settings: Settings, store: KnowledgeStore, profiles: ProfileServ
         for number, example in enumerate(examples):
             if st.button(example, key=f"example_{owner}_{number}", use_container_width=True):
                 st.session_state.pending_question = (owner, example)
-    typed = st.chat_input("Ask your own question…", key=f"chat_input_{owner}")
+    typed = st.chat_input("Ask your own question…", key=f"chat_input_{provider}_{owner}")
     pending = st.session_state.pop("pending_question", None)
     question = typed or (pending[1] if isinstance(pending, tuple) and pending[0] == owner else None)
-    if not question:
+    if question:
+        st.session_state.pending_chat = {"owner": owner, "question": question, "tried": []}
+    request = st.session_state.get("pending_chat")
+    if not request or request["owner"] != owner:
         if not messages:
             st.caption("Ask about your profile or the advisor's documents. Missing information will be explained.")
         return
-    history = list(messages)
-    messages.append(Message("user", question, profile_id=profile_id))
+    question = request["question"]
+    st.caption(f"Pending question: {question}")
+    if st.button("Cancel pending question"):
+        st.session_state.pop("pending_chat", None)
+        st.rerun()
     try:
-        with st.spinner("Reading the latest profile and advisor knowledge…"):
+        with st.spinner("Checking provider and reading current knowledge…"):
+            _ensure_provider(settings)
+            if not _index_missing(settings, store, resume=True):
+                return
             client = _client(settings)
-            knowledge = DocumentService(store, client, settings)
+            knowledge = DocumentService(store, client, settings.for_provider(provider))
             answer = ChatService(knowledge, client, settings.max_tool_calls, profiles=profiles).ask(
-                question, history, profile_id,
+                question, list(messages), profile_id,
                 chat_instructions=st.session_state.chat_prompt_active,
                 prompt_revision=st.session_state.chat_prompt_revision,
             )
-    except (ValueError, ProviderError, DatabaseError) as error:
+    except NoProviderAvailable as error:
         answer = Answer(f"I couldn't complete that request: {error}")
+    except ProviderError as error:
+        request["tried"].append(provider)
+        st.session_state.pop("provider_checked", None)
+        if len(set(request["tried"])) < 2:
+            try:
+                st.session_state.provider_notice = str(error)
+                _ensure_provider(settings, exclude=set(request["tried"]))
+            except (ProviderError, ValueError) as fallback_error:
+                error = ProviderError(f"{error} {fallback_error}")
+        answer = Answer(f"I couldn't complete that request: {error}")
+    except (ValueError, DatabaseError) as error:
+        answer = Answer(f"I couldn't complete that request: {error}")
+    messages.append(Message("user", question, profile_id=profile_id))
     messages.append(Message("assistant", answer.text, answer, profile_id))
+    st.session_state.pop("pending_chat", None)
     st.rerun()
 
 
@@ -142,15 +265,15 @@ def _preview(uploaded: Any) -> Upload | None:
 def _index_upload(settings: Settings, store: KnowledgeStore, upload: Upload, label: str, replace: Document | None = None) -> None:
     try:
         progress = st.progress(0, text=f"Indexing {label}…")
-        service = _document_service(settings, store)
         def update(value: float) -> None:
             progress.progress(value, text=f"Indexing {label}… {value:.0%}")
 
-        message = service.add(upload, replace=replace, progress=update)
+        message = _run_document_action(settings, store, lambda service: service.add(upload, replace=replace, progress=update))
         progress.progress(1.0, text="Indexing complete")
         st.success(message)
     except (ValueError, ProviderError, DatabaseError) as error:
-        st.error(f"{label}: {error}")
+        st.session_state.document_error = f"{label}: {error}"
+        st.error(st.session_state.document_error)
 
 
 def knowledge_screen(settings: Settings, store: KnowledgeStore) -> None:
@@ -160,19 +283,26 @@ def knowledge_screen(settings: Settings, store: KnowledgeStore) -> None:
     st.caption("Supported: PDF, TXT, Word .docx, and Markdown. Maximum 10 MB per file. Google Docs can be exported as .docx or PDF before upload.")
     st.info("Documents are reference material. Instructions inside an upload cannot grant permissions or change records.")
 
+    if error := st.session_state.pop("document_error", None):
+        st.error(error)
+    _index_missing(settings, store)
     if st.button("Load fictional sample pack", type="secondary"):
+        try:
+            _ensure_provider(settings, rerun=False)
+        except (ValueError, ProviderError) as error:
+            st.error(str(error))
+            return
         sample_dir = settings.sample_dir
         if not sample_dir.exists():
             st.error("The fictional sample pack is missing from data/samples.")
         else:
-            service = _document_service(settings, store)
             loaded, errors = 0, 0
             for path in sorted(sample_dir.iterdir()):
                 if path.suffix.lower().lstrip(".") not in SUPPORTED:
                     continue
                 try:
-                    upload = service.preview(path.name, path.read_bytes())
-                    service.add(upload)
+                    upload = DocumentService.preview(path.name, path.read_bytes())
+                    _run_document_action(settings, store, partial(DocumentService.add, upload=upload))
                     loaded += 1
                 except (OSError, UploadError, ValueError, ProviderError, DatabaseError) as error:
                     errors += 1
@@ -232,6 +362,9 @@ def main() -> None:
     st.set_page_config(page_title="Student Helpdesk · Fictional Workshop", page_icon="💬", layout="wide")
     st.markdown(STYLE, unsafe_allow_html=True)
     settings = Settings()
+    if "preferred_provider" not in st.session_state:
+        st.session_state.preferred_provider = settings.default_provider()
+        st.session_state.active_provider = settings.default_provider()
     try:
         store = _services(settings)
         profiles = _profile_service(settings)
@@ -250,10 +383,29 @@ def main() -> None:
             labels[st.session_state.selected_profile] = "Unavailable student — select another"
         selected = st.selectbox("Student", list(labels), format_func=lambda value: labels[value], key="selected_profile", on_change=_profile_changed)
         profile_id = UUID(selected) if selected != "general" else None
+        st.selectbox("Preferred AI provider", ["gemini", "openai"], format_func=lambda value: "Gemini" if value == "gemini" else "OpenAI", key="preferred_provider", on_change=_provider_changed)
+        active = _active(settings)
+        provider_name = "Gemini" if active == "gemini" else "OpenAI"
+        verified = st.session_state.get("provider_checked") == (config_token(settings), active)
+        if verified:
+            st.caption(f"Active provider: {provider_name}")
+        else:
+            st.caption(f"Selected provider: {provider_name} (not verified)")
+        if not settings.configured(active):
+            key_name = "GEMINI_API_KEY" if active == "gemini" else "OPENAI_API_KEY"
+            st.warning(f"{key_name} is not configured in the running app. Save it in the project .env file, then recreate the app container.")
+            st.code("docker compose up -d --force-recreate --no-deps app", language="bash")
+        if st.session_state.get("provider_error"):
+            st.error("No provider has passed both chat and embedding checks. Check configuration, then retry.")
+        if st.session_state.get("provider_notice"):
+            st.info(st.session_state.provider_notice)
+        if st.button("Retry preferred provider"):
+            _provider_changed()
+            st.rerun()
         page = st.radio("Workspace", ["Chat", "Student Profile", "Knowledge Base"], label_visibility="collapsed")
         st.divider()
         st.caption(f"Indexed documents: {len(store.documents())}")
-        st.caption(f"Model: {settings.gemini_model}")
+        st.caption(f"Model: {settings.openai_model if active == 'openai' else settings.gemini_model}")
         st.caption("Local workshop workflow; no authenticated student or advisor roles.")
     if page == "Chat":
         chat_screen(settings, store, profiles, profile_id)

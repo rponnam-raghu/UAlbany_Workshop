@@ -3,22 +3,24 @@
 import argparse
 import sys
 
-from academic_advisor.agent.gemini import Gemini, ProviderError
+from academic_advisor.agent.errors import ProviderError
+from academic_advisor.agent.providers import create_client, select_provider
 from academic_advisor.config import Settings
 from academic_advisor.knowledge.service import DocumentService
 from academic_advisor.storage.knowledge import KnowledgeStore
 from academic_advisor.storage.postgres import Database, DatabaseError
 
 
-def _store(settings: Settings) -> KnowledgeStore:
+def _store(settings: Settings, provider: str) -> KnowledgeStore:
     database = Database(settings)
     database.migrate()
-    return KnowledgeStore(database, f"{settings.embedding_model}:{settings.embedding_dimension}")
+    return KnowledgeStore(database, settings.signature(provider))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fictional student helpdesk administration")
     parser.add_argument("command", choices=["init-db", "list-documents", "load-samples", "smoke"])
+    parser.add_argument("--provider", choices=["gemini", "openai"])
     args = parser.parse_args()
     settings = Settings()
     try:
@@ -26,7 +28,8 @@ def main() -> None:
             Database(settings).migrate()
             print("Database initialized.")
             return
-        store = _store(settings)
+        provider = args.provider or settings.default_provider()
+        store = _store(settings, provider)
         if args.command == "list-documents":
             documents = store.documents()
             if not documents:
@@ -34,7 +37,11 @@ def main() -> None:
             for document in documents:
                 print(f"{document.filename}\t{document.passage_count} passages\t{document.content_hash[:12]}")
             return
-        service = DocumentService(store, Gemini(settings), settings)
+        provider, notice, _ = select_provider(settings, provider)
+        if notice:
+            print(f"Using {provider}. {notice}")
+        store = _store(settings, provider)
+        service = DocumentService(store, create_client(settings, provider), settings.for_provider(provider))
         if args.command == "load-samples":
             loaded = 0
             for path in sorted(settings.sample_dir.iterdir()):

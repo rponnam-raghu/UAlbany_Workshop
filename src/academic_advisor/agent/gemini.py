@@ -6,11 +6,8 @@ import numpy as np
 from google import genai
 from google.genai import types
 
+from academic_advisor.agent.errors import ProviderError as ProviderError
 from academic_advisor.config import Settings
-
-
-class ProviderError(RuntimeError):
-    """A credential-free error safe to display."""
 
 
 def provider_error(error: Exception) -> ProviderError:
@@ -80,7 +77,7 @@ class Gemini:
             for item in response.embeddings or []:
                 vector = np.asarray(item.values, dtype=float)
                 norm = float(np.linalg.norm(vector))
-                if vector.shape != (self.settings.embedding_dimension,) or not norm:
+                if vector.shape != (self.settings.embedding_dimension,) or not np.isfinite(vector).all() or not norm:
                     raise ValueError("Invalid embedding.")
                 vectors.append((vector / norm).tolist())
             if len(vectors) != len(texts):

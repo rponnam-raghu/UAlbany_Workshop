@@ -100,7 +100,7 @@ class ChatService:
             if cited - available:
                 trace.append({"tool": "validate_citations", "arguments": {}, "result": {"status": "error", "message": "Unknown citation identifiers rejected."}})
                 return Answer("I couldn't verify the sources for that answer. Please rephrase your question and try again.", trace=trace, revision=revision, profile_snapshot=profile, prompt_revision=prompt_revision)
-            if profile is None and sources and not cited and not turn.text.startswith(("Gemini request failed", "Stopped")):
+            if profile is None and sources and not cited and not turn.text.startswith(("Stopped",)):
                 turn.text += "\n\n_No supporting passage was cited for this response._"
             return Answer(turn.text, [s for s in sources if s.citation in cited], trace, revision, profile, prompt_revision)
         raise AssertionError("Unreachable")

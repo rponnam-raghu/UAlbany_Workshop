@@ -30,9 +30,9 @@ Three fictional student profiles are seeded in PostgreSQL during initialization;
 
 ### Start the application
 
-Have Docker Desktop running and the repository available locally. Each participant uses their own Gemini API key in `.env`. Pair students when setup problems would otherwise take time away from the workshop.
+Have Docker Desktop running and the repository available locally. Each participant configures their own `GEMINI_API_KEY`, `OPENAI_API_KEY`, or both in `.env`. Either provider can handle chat and embeddings independently. Pair students when setup problems would otherwise take time away from the workshop.
 
-If `.env` does not exist, copy [`.env_example`](.env_example) to `.env` and replace the `GEMINI_API_KEY` placeholder with your own key. Keep an existing configured `.env`; never commit it, put keys in documents, or share them on screen. The template also lists optional configuration overrides. Local `.env` files, virtual environments, caches, and runtime output are excluded from Git and the Docker build context.
+If `.env` does not exist, copy [`.env_example`](.env_example) to `.env` and replace the relevant API key placeholder with your own key. Keep an existing configured `.env`; never commit it, put keys in documents, or share them on screen. The template also lists optional configuration overrides. Local `.env` files, virtual environments, caches, and runtime output are excluded from Git and the Docker build context.
 
 Run these commands from the repository root. Use the development configuration for the date-tool exercise:
 
@@ -51,6 +51,28 @@ docker compose up --build -d
 ```
 
 The regular configuration keeps PostgreSQL on the internal Compose network without exposing a host database port. Both configurations preserve knowledge in the `postgres_data` volume.
+
+### Choose an AI provider
+
+The sidebar's **Preferred AI provider** selector offers Gemini and OpenAI. The app starts with Gemini when its key is configured, otherwise OpenAI. Selecting a provider alone makes no API calls. On first use, small requests verify chat, document embeddings, and query embeddings. These checks consume API usage and successful checks are cached for the session/configuration.
+
+If a check fails, the app tries the other configured provider. A later provider failure during chat or indexing also permits one alternate provider attempt. The sidebar shows the active provider and fallback reason. **Retry preferred provider** clears the cached selection for the next request. If neither provider works, the app displays a sanitized error. Chat and embeddings always use the same active provider and its key.
+
+Gemini uses `GEMINI_MODEL` (default `gemini-3.8-flash`), `EMBEDDING_MODEL` (default `gemini-embedding-001`), and `EMBEDDING_DIMENSION` (default 768). OpenAI uses `OPENAI_MODEL` (default `gpt-4.1-mini`), `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`), and `OPENAI_EMBEDDING_DIMENSION` (default 768). Model access and billing depend on your API account. No keys appear in the UI.
+
+Documents and fictional profiles are shared. Embeddings are separate for each provider/model/dimension combination and cannot be mixed. The migration preserves existing Gemini vectors and uploaded originals. When the active provider needs an index, use **Index existing documents for [provider]** in Knowledge Base, or **Index documents and continue** beneath a pending chat question. This explicitly sends document passages to the active provider. Chat waits for the complete index before answering. Switching back reuses an existing current index.
+
+New uploads index with the active provider. Replacing a document updates its shared contents and invalidates its other embedding indexes; failed replacement preserves the prior contents. Removing a document removes all its indexes. Conversation histories remain separate by provider and student. Switching providers or students cancels a pending question; automatic fallback preserves it.
+
+After changing `.env` or dependencies, recreate the application container so Compose loads the new environment:
+
+```sh
+docker compose -f compose.yaml -f compose.dev.yaml up --build -d --no-deps app
+```
+
+This preserves the database volume. For the regular configuration, omit `-f compose.yaml -f compose.dev.yaml`.
+
+CLI commands `load-samples` and `smoke` accept `--provider gemini` or `--provider openai` and check both capabilities before automatic fallback. `list-documents` and `init-db` do not require provider calls. The `smoke` command checks retrieval, not a full live conversation. Index existing documents through the UI before searching with a new provider.
 
 ### If a port is already in use
 
@@ -198,7 +220,7 @@ Walk through this sequence using the intake PDF:
 2. **Split:** turn extracted text into bounded, overlapping passages so the model receives relevant excerpts.
 3. **Embed and store:** represent passage meaning as vectors, then store originals, metadata, text, and vectors in PostgreSQL with pgvector.
 4. **Retrieve:** search current knowledge for passages relevant to each new question.
-5. **Answer:** give Gemini the question, the latest selected profile, that student's conversation context, and retrieved passages. Associate document source identifiers with the answer and validate them against those passages. Personal facts are attributed to the saved profile and do not need a document citation.
+5. **Answer:** give the active chat provider the question, the latest selected profile, that student's conversation context, and retrieved passages. Associate document source identifiers with the answer and validate them against those passages. Personal facts are attributed to the saved profile and do not need a document citation.
 
 **Say:** “A citation lets us inspect a claim. A valid source identifier alone does not prove that every claim in the answer is supported.”
 
@@ -392,4 +414,4 @@ To include PostgreSQL integration tests against the bundled database:
 docker compose -f compose.yaml -f compose.dev.yaml exec -e TEST_DATABASE_URL=postgresql://advisor:workshop@db:5432/advisor app uv run --no-sync pytest -q
 ```
 
-Unit tests use fake providers; database tests need PostgreSQL, and neither is a substitute for observing an actual Gemini conversation during rehearsal. Database tests skip when `TEST_DATABASE_URL` is absent; their configured database role must be able to create and drop an isolated test database.
+Unit tests use fake providers; database tests need PostgreSQL, and neither is a substitute for observing an actual provider conversation during rehearsal. Database tests skip when `TEST_DATABASE_URL` is absent; their configured database role must be able to create and drop an isolated test database.

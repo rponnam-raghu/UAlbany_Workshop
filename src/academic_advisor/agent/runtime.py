@@ -6,7 +6,6 @@ from typing import Any, Protocol
 
 from google.genai import types
 
-from academic_advisor.agent.gemini import ProviderError
 from academic_advisor.tools.registry import Registry
 
 
@@ -36,10 +35,7 @@ def run_turn(
     calls_used = 0
     seen: dict[str, dict[str, Any]] = {}
     for _ in range(12):
-        try:
-            content = client.generate(system, messages, registry.schemas())
-        except ProviderError as error:
-            return Turn(f"Gemini request failed: {error}", messages, trace)
+        content = client.generate(system, messages, registry.schemas())
         messages.append(content)  # Preserve thought signatures; never reconstruct model parts.
         calls = [part.function_call for part in content.parts or [] if part.function_call]
         if not calls:
